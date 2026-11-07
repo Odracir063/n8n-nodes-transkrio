@@ -1,8 +1,9 @@
 # n8n-nodes-transkrio
 
-[n8n](https://n8n.io) community node for [Transkrio](https://transkrio.com): YouTube transcripts,
-video metadata, and playlist or channel listings. Failed requests are free, and you get 100 free
-credits to start.
+[n8n](https://n8n.io) community node for [Transkrio](https://transkrio.com): transcripts of YouTube and
+TikTok videos, Instagram Reels and podcast episodes (RSS feeds, Apple Podcasts links, audio file URLs),
+metadata, and playlist, channel or podcast episode listings. Failed requests are free, and you get
+100 free credits to start.
 
 It can also be used as a tool by n8n's AI Agent node.
 
@@ -17,13 +18,13 @@ Get a free API key at [transkrio.com](https://transkrio.com/#signup) and create 
 
 ## Operations
 
-| Resource | Operation                                                                                                 | Cost                 |
-| -------- | --------------------------------------------------------------------------------------------------------- | -------------------- |
-| Video    | Get Transcript: full `text` plus timestamped `segments`, optional language                                | 1 credit on success  |
-| Video    | Get Many Transcripts: up to 50 URLs, one output item per video with `ok` and the transcript or an `error` | 1 credit per success |
-| Video    | Get Metadata: title, channel, duration, views, upload date, caption languages                             | 1 credit             |
-| Video    | List Videos: videos of a playlist or channel (newest first), one item per video                           | 1 credit             |
-| Account  | Get Usage: plan, credits left, last 30 days                                                               | free                 |
+| Resource | Operation                                                                                                       | Cost                                                      |
+| -------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Video    | Get Transcript: full `text` plus timestamped `segments`, optional language. Waits for long audio (up to 15 min) | 1 credit with captions; 1 per minute of transcribed audio |
+| Video    | Get Many Transcripts: up to 50 URLs, one output item per video with `ok` and the transcript or an `error`       | same as separate calls                                    |
+| Video    | Get Metadata: title, channel or show, duration, views, upload date, caption languages                           | 1 credit                                                  |
+| Video    | List Videos: videos of a playlist or channel, or episodes of a podcast (newest first), one item per video       | 1 credit                                                  |
+| Account  | Get Usage: plan, credits left, last 30 days                                                                     | free                                                      |
 
 ## Example workflow
 
@@ -35,7 +36,11 @@ Get a free API key at [transkrio.com](https://transkrio.com/#signup) and create 
 4. Notion, Slack or Google Sheets to store the summaries.
 
 The node also works as a tool for the **AI Agent** node, so an agent can fetch a transcript on its own
-when a user pastes a YouTube link.
+when a user pastes a YouTube, TikTok, Reel or podcast link.
+
+Videos and episodes without captions are transcribed from the audio. A long podcast episode can take
+a minute or two: Get Transcript waits for it, while Get Many Transcripts returns those items with
+error code `processing` so you can send them again later.
 
 Errors (no captions, private video, invalid URL) cost 0 credits. Turn on **Continue On Fail** to keep
 the workflow running and get the error in the item instead.
