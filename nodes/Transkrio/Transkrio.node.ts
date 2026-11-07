@@ -1,5 +1,48 @@
-import type { INodeType, INodeTypeDescription } from 'n8n-workflow';
-import { NodeConnectionTypes } from 'n8n-workflow';
+import type {
+	IDataObject,
+	IExecuteSingleFunctions,
+	IN8nHttpFullResponse,
+	INodeExecutionData,
+	INodeType,
+	INodeTypeDescription,
+} from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError, sleep } from 'n8n-workflow';
+
+const BASE_URL = 'https://api.transkrio.com';
+// Long audio (podcasts) is transcribed in the background: the API answers 202 "processing"
+// and the same request returns the transcript once it is ready. Wait for it up to this long.
+const MAX_WAIT_MS = 15 * 60 * 1000;
+
+async function waitWhileProcessing(
+	this: IExecuteSingleFunctions,
+	items: INodeExecutionData[],
+	response: IN8nHttpFullResponse,
+): Promise<INodeExecutionData[]> {
+	if (response.statusCode !== 202) return items;
+	const url = this.getNodeParameter('url') as string;
+	const lang = (this.getNodeParameter('lang', '') as string) || undefined;
+	const deadline = Date.now() + MAX_WAIT_MS;
+	let body = response.body as IDataObject;
+	while (Date.now() < deadline) {
+		await sleep(Math.max(5, Number(body.retry_after) || 15) * 1000);
+		const res = (await this.helpers.httpRequestWithAuthentication.call(this, 'transkrioApi', {
+			method: 'GET',
+			url: `${BASE_URL}/v1/transcript`,
+			qs: { url, lang, format: 'json' },
+			json: true,
+			returnFullResponse: true,
+		})) as IN8nHttpFullResponse;
+		body = res.body as IDataObject;
+		if (res.statusCode !== 202) return [{ json: body }];
+	}
+	throw new NodeOperationError(
+		this.getNode(),
+		'The transcription is still running after 15 minutes. Run the node again later to get it.',
+	);
+}
+
+const MEDIA_URL =
+	'YouTube, TikTok or Instagram Reel URL, YouTube video ID, podcast RSS feed (latest episode, or an episode URL from List Videos), Apple Podcasts link or audio file URL';
 
 const urlField = (operation: string, description: string) => ({
 	displayName: 'URL',
@@ -7,7 +50,7 @@ const urlField = (operation: string, description: string) => ({
 	type: 'string' as const,
 	required: true,
 	default: '',
-	placeholder: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+	placeholder: 'https://www.tiktok.com/@user/video/7234567890123456789',
 	description,
 	displayOptions: { show: { resource: ['video'], operation: [operation] } },
 	routing: { send: { type: 'query' as const, property: 'url' } },
@@ -22,14 +65,14 @@ export class Transkrio implements INodeType {
 		version: 1,
 		subtitle: '={{$parameter["operation"]}}',
 		description:
-			'Get YouTube transcripts, metadata, and playlist or channel videos. Failed requests are free.',
+			'Transcripts of YouTube and TikTok videos, Instagram Reels and podcasts. Failed requests are free.',
 		defaults: { name: 'Transkrio' },
 		usableAsTool: true,
 		inputs: [NodeConnectionTypes.Main],
 		outputs: [NodeConnectionTypes.Main],
 		credentials: [{ name: 'transkrioApi', required: true }],
 		requestDefaults: {
-			baseURL: 'https://api.transkrio.com',
+			baseURL: BASE_URL,
 			headers: { Accept: 'application/json' },
 		},
 		properties: [
@@ -54,15 +97,20 @@ export class Transkrio implements INodeType {
 					{
 						name: 'Get Transcript',
 						value: 'getTranscript',
-						action: 'Get the transcript of a video',
-						description: 'Full transcript as text plus timestamped segments. 1 credit on success.',
-						routing: { request: { method: 'GET', url: '/v1/transcript', qs: { format: 'json' } } },
+						action: 'Get the transcript of a video or episode',
+						description:
+							'Full transcript as text plus timestamped segments. 1 credit with captions, or 1 per minute of transcribed audio.',
+						routing: {
+							request: { method: 'GET', url: '/v1/transcript', qs: { format: 'json' } },
+							output: { postReceive: [waitWhileProcessing] },
+						},
 					},
 					{
 						name: 'Get Many Transcripts',
 						value: 'batch',
 						action: 'Get the transcripts of many videos',
-						description: 'Up to 50 videos in one call. 1 credit per successful transcript.',
+						description:
+							'Up to 50 videos or episodes in one call. Same credits as separate calls; failures are free.',
 						routing: {
 							request: { method: 'POST', url: '/v1/batch' },
 							output: {
@@ -73,16 +121,17 @@ export class Transkrio implements INodeType {
 					{
 						name: 'Get Metadata',
 						value: 'getMetadata',
-						action: 'Get the metadata of a video',
+						action: 'Get the metadata of a video or episode',
 						description:
-							'Title, channel, duration, views, upload date and caption languages. 1 credit.',
+							'Title, channel or show, duration, views, upload date and caption languages. 1 credit.',
 						routing: { request: { method: 'GET', url: '/v1/metadata' } },
 					},
 					{
 						name: 'List Videos',
 						value: 'listVideos',
-						action: 'List the videos of a playlist or channel',
-						description: 'Videos of a playlist or a channel, newest first for channels. 1 credit.',
+						action: 'List videos or podcast episodes',
+						description:
+							'Videos of a YouTube playlist or channel, or episodes of a podcast, newest first. 1 credit.',
 						routing: {
 							request: { method: 'GET', url: '/v1/videos' },
 							output: {
@@ -111,14 +160,11 @@ export class Transkrio implements INodeType {
 				default: 'getUsage',
 			},
 
-			urlField(
-				'getTranscript',
-				'YouTube video URL (watch, youtu.be, Shorts, live, embed) or 11-character video ID',
-			),
-			urlField('getMetadata', 'YouTube video URL or 11-character video ID'),
+			urlField('getTranscript', MEDIA_URL),
+			urlField('getMetadata', MEDIA_URL),
 			urlField(
 				'listVideos',
-				'Playlist URL or ID, channel URL (/@handle, /channel/UC...) or @handle',
+				'YouTube playlist URL or ID, channel URL (/@handle, /channel/UC...) or @handle, podcast RSS feed or Apple Podcasts show link',
 			),
 			{
 				displayName: 'Language',
@@ -149,7 +195,7 @@ export class Transkrio implements INodeType {
 				default: '',
 				placeholder: 'dQw4w9WgXcQ, https://youtu.be/jNQXAC9IVRw',
 				description:
-					'Up to 50 video URLs or IDs, separated by commas or new lines. An array from an expression also works.',
+					'Up to 50 URLs (any supported platform) or YouTube IDs, separated by commas or new lines. An array from an expression also works. Items still being transcribed come back with error code "processing": send them again later.',
 				displayOptions: { show: { resource: ['video'], operation: ['batch'] } },
 				routing: {
 					send: {
