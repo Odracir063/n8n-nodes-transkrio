@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-transkrio",
-	"version": "0.1.1",
+	"version": "0.2.0",
 	"description": "n8n node for Transkrio: transcripts of YouTube, TikTok, Instagram Reels and podcasts. Failed requests are free.",
 	"keywords": [
 		"n8n-community-node-package",
